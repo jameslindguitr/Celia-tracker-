@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cycle">
+<title>Cycle Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { font-family: 'DM Sans', sans-serif; background: #faf9f7; overscroll-behavior: none; }
+input, textarea, button { font-family: 'DM Sans', sans-serif; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const PHASES = [
+  { name: "Menstrual", days: [1, 5], color: "#c2185b", bg: "#fce4ec", hormone: "Estrogen & progesterone at lowest. Prostaglandins trigger cramping.", mood: "Low energy, introspective. Cramps, bloating, fatigue common.", icon: "\u{1FA78}" },
+  { name: "Follicular", days: [6, 11], color: "#6a1b9a", bg: "#f3e5f5", hormone: "Estrogen rising steadily. FSH stimulating follicle growth.", mood: "Energy climbing, mood lifting. Skin clearing, creativity up.", icon: "\u{1F331}" },
+  { name: "Ovulatory", days: [12, 16], color: "#e65100", bg: "#fff3e0", hormone: "Estrogen peaks \u2192 LH surge \u2192 egg release. Testosterone briefly spikes.", mood: "Peak energy & libido. Most sociable, confident. Mild cramping possible.", icon: "\u{1F525}" },
+  { name: "Early Luteal", days: [17, 22], color: "#00695c", bg: "#e0f2f1", hormone: "Progesterone rising sharply. Estrogen dips then partially recovers.", mood: "Calming down. Body temperature up. Appetite may increase.", icon: "\u{1F342}" },
+  { name: "Late Luteal / PMS", days: [23, 28], color: "#37474f", bg: "#eceff1", hormone: "Progesterone & estrogen both dropping. Serotonin falls with them.", mood: "Irritability, bloating, fatigue, cravings. Sensitivity heightened.", icon: "\u{1F30A}" },
+];
+
+const SYMPTOMS = ["Cramps","Bloating","Headache","Fatigue","Nausea","Back pain","Tender breasts","Cravings","Mood swings","Anxious","Irritable","Calm","Happy","High energy","Low energy","High libido","Spotting"];
+const ENERGY = ["Very low","Low","Medium","High","Very high"];
+
+function getPhase(day) {
+  const d = ((day - 1) % 28) + 1;
+  return PHASES.find(p => d >= p.days[0] && d <= p.days[1]) || PHASES[4];
+}
+function daysBetween(a, b) {
+  return Math.round((new Date(b).setHours(0,0,0,0) - new Date(a).setHours(0,0,0,0)) / 86400000);
+}
+function fmt(date) { return new Date(date).toLocaleDateString("en-GB", { day:"numeric", month:"short" }); }
+function fmtFull(date) { return new Date(date).toLocaleDateString("en-GB", { weekday:"short", day:"numeric", month:"short" }); }
+
+function UserPicker({ onSelect }) {
+  const displayFont = "'Instrument Serif', serif";
+  return (
+    <div style={{ minHeight:"100vh", background:"#faf9f7", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40 }}>
+      <div style={{ fontFamily: displayFont, fontSize:32, color:"#333", marginBottom:8 }}>Cycle Tracker</div>
+      <div style={{ fontSize:14, color:"#888", marginBottom:40 }}>Who's logging in?</div>
+      <button onClick={() => onSelect("james")}
+        style={{ width:220, padding:"18px 0", borderRadius:14, border:"2px solid #1a5276", background:"#fff", color:"#1a5276", fontSize:18, fontWeight:600, cursor:"pointer", marginBottom:16, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+        {"\u{1F3B8}"} James
+      </button>
+      <button onClick={() => onSelect("celia")}
+        style={{ width:220, padding:"18px 0", borderRadius:14, border:"2px solid #c2185b", background:"#fff", color:"#c2185b", fontSize:18, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+        {"\u2728"} Celia
+      </button>
+    </div>
+  );
+}
+
+function Tracker({ user, onSwitchUser }) {
+  const storageKey = "cycle-data-" + user;
+  const loadUserData = () => { try { return JSON.parse(localStorage.getItem(storageKey)) || {}; } catch { return {}; } };
+  const saveUserData = (data) => { try { localStorage.setItem(storageKey, JSON.stringify(data)); } catch {} };
+
+  const saved = loadUserData();
+  const [startDate, setStartDate] = useState(saved.startDate || "2026-04-02");
+  const [cycleLength, setCycleLength] = useState(saved.cycleLength || 28);
+  const [logs, setLogs] = useState(saved.logs || {});
+  const [view, setView] = useState("dashboard");
+  const [logDate, setLogDate] = useState(new Date().toISOString().slice(0,10));
+  const [selectedSymptoms, setSelectedSymptoms] = useState([]);
+  const [energy, setEnergy] = useState(2);
+  const [notes, setNotes] = useState("");
+
+  useEffect(() => { saveUserData({ startDate, cycleLength, logs }); }, [startDate, cycleLength, logs]);
+
+  const today = new Date().toISOString().slice(0,10);
+  const currentDay = daysBetween(startDate, today) + 1;
+  const cycleDayNorm = currentDay > 0 ? ((currentDay - 1) % cycleLength) + 1 : 1;
+  const phase = getPhase(cycleDayNorm);
+
+  const nextPeriodStart = (() => {
+    let next = new Date(startDate);
+    while (next <= new Date(today)) next.setDate(next.getDate() + cycleLength);
+    return next.toISOString().slice(0,10);
+  })();
+  const daysUntilPeriod = daysBetween(today, nextPeriodStart);
+
+  const ovulationDay = Math.round(cycleLength - 14);
+  const currentCycleStart = (() => {
+    let cs = new Date(startDate);
+    while (daysBetween(cs.toISOString().slice(0,10), today) >= cycleLength) cs.setDate(cs.getDate() + cycleLength);
+    return cs.toISOString().slice(0,10);
+  })();
+  const ovulationDate = (() => { const d = new Date(currentCycleStart); d.setDate(d.getDate() + ovulationDay - 1); return d.toISOString().slice(0,10); })();
+  const fertileStart = (() => { const d = new Date(ovulationDate); d.setDate(d.getDate() - 3); return d.toISOString().slice(0,10); })();
+  const fertileEnd = (() => { const d = new Date(ovulationDate); d.setDate(d.getDate() + 1); return d.toISOString().slice(0,10); })();
+
+  const toggleSymptom = (s) => setSelectedSymptoms(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+
+  const saveLog = () => {
+    setLogs(prev => ({ ...prev, [logDate]: { symptoms: selectedSymptoms, energy, notes, loggedBy: user, timestamp: Date.now() } }));
+    setView("dashboard");
+    setSelectedSymptoms([]); setEnergy(2); setNotes("");
+  };
+
+  const loadLog = (date) => {
+    setLogDate(date);
+    const existing = logs[date];
+    if (existing) { setSelectedSymptoms(existing.symptoms || []); setEnergy(existing.energy ?? 2); setNotes(existing.notes || ""); }
+    else { setSelectedSymptoms([]); setEnergy(2); setNotes(""); }
+    setView("log");
+  };
+
+  const getHormoneLevels = (day) => {
+    const d = ((day - 1) % 28) + 1;
+    if (d <= 5) return { estrogen:15, progesterone:5, lh:8, fsh:35 };
+    if (d <= 11) return { estrogen:55, progesterone:5, lh:12, fsh:50 };
+    if (d <= 16) return { estrogen:90, progesterone:10, lh:85, fsh:30 };
+    if (d <= 22) return { estrogen:50, progesterone:80, lh:10, fsh:10 };
+    return { estrogen:30, progesterone:45, lh:8, fsh:15 };
+  };
+  const hormones = getHormoneLevels(cycleDayNorm);
+
+  const hormoneBar = (label, pct, color) => (
+    React.createElement("div", { style: { marginBottom: 8 } },
+      React.createElement("div", { style: { display:"flex", justifyContent:"space-between", fontSize:12, color:"#555", marginBottom:3 } },
+        React.createElement("span", null, label), React.createElement("span", null, pct + "%")),
+      React.createElement("div", { style: { height:6, background:"#e0e0e0", borderRadius:3 } },
+        React.createElement("div", { style: { height:6, width: pct + "%", background: color, borderRadius:3, transition:"width 0.6s ease" } })))
+  );
+
+  const timeline = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(today); d.setDate(d.getDate() + i);
+    const dateStr = d.toISOString().slice(0,10);
+    const dayNum = daysBetween(startDate, dateStr) + 1;
+    const dn = dayNum > 0 ? ((dayNum - 1) % cycleLength) + 1 : 1;
+    return { date: dateStr, dayNum: dn, phase: getPhase(dn), hasLog: !!logs[dateStr], isToday: i === 0 };
+  });
+
+  const displayFont = "'Instrument Serif', serif";
+  const userName = user === "james" ? "James" : "Celia";
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#faf9f7" }}>
+      <div style={{ background: phase.color, color:"#fff", padding:"20px 20px 16px" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+          <div>
+            <div style={{ fontSize:13, opacity:0.8, letterSpacing:1, textTransform:"uppercase", marginBottom:4 }}>Day {cycleDayNorm} of {cycleLength}</div>
+            <div style={{ fontFamily: displayFont, fontSize:28, lineHeight:1.1 }}>{phase.icon} {phase.name} Phase</div>
+          </div>
+          <div style={{ textAlign:"right" }}>
+            <button onClick={onSwitchUser} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"#fff", padding:"4px 10px", borderRadius:12, fontSize:11, cursor:"pointer", marginBottom:4 }}>
+              {userName} {"\u25BE"}
+            </button>
+            <div style={{ fontSize:12, opacity:0.8, lineHeight:1.6 }}>
+              <div>{fmtFull(today)}</div>
+              <div>{daysUntilPeriod}d until next period</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display:"flex", borderBottom:"1px solid #e0e0e0", background:"#fff" }}>
+        {["dashboard","log","history","settings"].map(v => (
+          <button key={v} onClick={() => { if (v === "log") loadLog(today); else setView(v); }}
+            style={{ flex:1, padding:"10px 0", fontSize:12, fontWeight: view === v ? 600 : 400, color: view === v ? phase.color : "#888", background:"none", border:"none", borderBottom: view === v ? "2px solid " + phase.color : "2px solid transparent", cursor:"pointer", textTransform:"capitalize" }}>
+            {v === "log" ? "Log Today" : v}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding:"16px 20px", maxWidth:480, margin:"0 auto" }}>
+
+        {view === "dashboard" && <>
+          <div style={{ background: phase.bg, borderRadius:12, padding:16, marginBottom:16, borderLeft:"4px solid " + phase.color }}>
+            <div style={{ fontSize:13, fontWeight:600, color: phase.color, marginBottom:6 }}>What's happening</div>
+            <div style={{ fontSize:13, color:"#444", lineHeight:1.5, marginBottom:8 }}>{phase.hormone}</div>
+            <div style={{ fontSize:13, color:"#444", lineHeight:1.5 }}><strong>How she may feel:</strong> {phase.mood}</div>
+          </div>
+
+          <div style={{ background:"#fff", borderRadius:12, padding:16, marginBottom:16, boxShadow:"0 1px 3px rgba(0,0,0,0.06)" }}>
+            <div style={{ fontSize:13, fontWeight:600, color:"#333", marginBottom:12 }}>Estimated Hormone Levels</div>
+            {hormoneBar("Estrogen", hormones.estrogen, "#e91e63")}
+            {hormoneBar("Progesterone", hormones.progesterone, "#7b1fa2")}
+            {hormoneBar("LH (Luteinizing)", hormones.lh, "#ef6c00")}
+            {hormoneBar("FSH (Follicle-Stim.)", hormones.fsh, "#00897b")}
+          </div>
+
+          <div style={{ background:"#fff", borderRadius:12, padding:16, marginBottom:16, boxShadow:"0 1px 3px rgba(0,0,0,0.06)" }}>
+            <div style={{ fontSize:13, fontWeight:600, color:"#333", marginBottom:8 }}>Fertility Window</div>
+            <div style={{ fontSize:13, color:"#666", lineHeight:1.6 }}>
+              <div>Fertile window: <strong>{fmt(fertileStart)} – {fmt(fertileEnd)}</strong></div>
+              <div>Estimated ovulation: <strong>{fmt(ovulationDate)}</strong> (day {ovulationDay})</div>
+              <div>Next period: <strong>{fmt(nextPeriodStart)}</strong> ({daysUntilPeriod} days)</div>
+            </div>
+          </div>
+
+          <div style={{ background:"#fff", borderRadius:12, padding:16, boxShadow:"0 1px 3px rgba(0,0,0,0.06)" }}>
+            <div style={{ fontSize:13, fontWeight:600, color:"#333", marginBottom:12 }}>Next 14 Days</div>
+            <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+              {timeline.map(t => (
+                <button key={t.date} onClick={() => loadLog(t.date)}
+                  style={{ width:42, height:50, borderRadius:8, background: t.isToday ? t.phase.color : t.phase.bg, color: t.isToday ? "#fff" : t.phase.color, border: t.hasLog ? "2px solid " + t.phase.color : "1px solid #e0e0e0", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:500, position:"relative" }}>
+                  <div style={{ fontSize:11, fontWeight:600 }}>{new Date(t.date).getDate()}</div>
+                  <div style={{ fontSize:9 }}>D{t.dayNum}</div>
+                  {t.hasLog && <div style={{ position:"absolute", top:2, right:3, fontSize:6 }}>{"\u25CF"}</div>}
+                </button>
+              ))}
+            </div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:10 }}>
+              {PHASES.map(p => (
+                <div key={p.name} style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, color:"#666" }}>
+                  <div style={{ width:8, height:8, borderRadius:2, background: p.color }} />{p.name}
+                </div>
+              ))}
+            </div>
+          </div>
+        </>}
+
+        {view === "log" && <>
+          <div style={{ fontFamily: displayFont, fontSize:22, color:"#333", marginBottom:4 }}>
+            Log — {fmtFull(logDate)}
+          </div>
+          <div style={{ fontSize:12, color:"#888", marginBottom:16 }}>
+            Day {((daysBetween(startDate, logDate)) % cycleLength) + 1} {"\u00B7"} {getPhase(((daysBetween(startDate, logDate)) % cycleLength) + 1).name} phase {"\u00B7"} Logging as {userName}
+          </div>
+
+          <div style={{ fontSize:13, fontWeight:600, color:"#333", marginBottom:8 }}>Symptoms & Mood</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:20 }}>
+            {SYMPTOMS.map(s => (
+              <button key={s} onClick={() => toggleSymptom(s)}
+                style={{ padding:"6px 12px", borderRadius:20, fontSize:12, border: selectedSymptoms.includes(s) ? "2px solid " + phase.color : "1px solid #ddd", background: selectedSymptoms.includes(s) ? phase.bg : "#fff", color: selectedSymptoms.includes(s) ? phase.color : "#666", cursor:"pointer", fontWeight: selectedSymptoms.includes(s) ? 600 : 400 }}>
+                {s}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ fontSize:13, fontWeight:600, color:"#333", marginBottom:8 }}>Energy Level</div>
+          <div style={{ display:"flex", gap:6, marginBottom:20 }}>
+            {ENERGY.map((e, i) => (
+              <button key={e} onClick={() => setEnergy(i)}
+                style={{ flex:1, padding:"8px 4px", borderRadius:8, fontSize:11, border: energy === i ? "2px solid " + phase.color : "1px solid #ddd", background: energy === i ? phase.bg : "#fff", color: energy === i ? phase.color : "#666", cursor:"pointer", fontWeight: energy === i ? 600 : 400 }}>
+                {e}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ fontSize:13, fontWeight:600, color:"#333", marginBottom:8 }}>Notes</div>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="How is she feeling? Anything notable..."
+            style={{ width:"100%", minHeight:80, padding:12, borderRadius:8, border:"1px solid #ddd", fontSize:13, resize:"vertical", outline:"none" }} />
+
+          <button onClick={saveLog}
+            style={{ width:"100%", marginTop:16, padding:"12px 0", borderRadius:10, background: phase.color, color:"#fff", border:"none", fontSize:14, fontWeight:600, cursor:"pointer" }}>
+            Save Log
+          </button>
+        </>}
+
+        {view === "history" && <>
+          <div style={{ fontFamily: displayFont, fontSize:22, color:"#333", marginBottom:16 }}>History</div>
+          {Object.keys(logs).length === 0 ?
+            <div style={{ fontSize:13, color:"#888", textAlign:"center", padding:40 }}>No logs yet. Tap "Log Today" to start.</div>
+          :
+            Object.entries(logs).sort(([a],[b]) => b.localeCompare(a)).map(([date, log]) => {
+              const dn = ((daysBetween(startDate, date)) % cycleLength) + 1;
+              const p = getPhase(dn);
+              return (
+                <div key={date} style={{ background:"#fff", borderRadius:10, padding:14, marginBottom:10, borderLeft:"4px solid " + p.color, boxShadow:"0 1px 3px rgba(0,0,0,0.06)" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:"#333" }}>{fmtFull(date)}</div>
+                    <div style={{ fontSize:11, color: p.color, fontWeight:500 }}>Day {dn} {"\u00B7"} {p.name}</div>
+                  </div>
+                  <div style={{ fontSize:12, color:"#666", marginBottom:4 }}>
+                    Energy: {ENERGY[log.energy]}{log.loggedBy ? " \u00B7 Logged by " + (log.loggedBy === "james" ? "James" : "Celia") : ""}
+                  </div>
+                  {log.symptoms.length > 0 &&
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:4 }}>
+                      {log.symptoms.map(s => <span key={s} style={{ fontSize:11, padding:"2px 8px", borderRadius:12, background: p.bg, color: p.color }}>{s}</span>)}
+                    </div>
+                  }
+                  {log.notes && <div style={{ fontSize:12, color:"#555", marginTop:4, fontStyle:"italic" }}>{log.notes}</div>}
+                </div>
+              );
+            })
+          }
+        </>}
+
+        {view === "settings" && <>
+          <div style={{ fontFamily: displayFont, fontSize:22, color:"#333", marginBottom:16 }}>Settings</div>
+          <div style={{ background:"#fff", borderRadius:12, padding:16, boxShadow:"0 1px 3px rgba(0,0,0,0.06)" }}>
+            <label style={{ fontSize:13, fontWeight:600, color:"#333", display:"block", marginBottom:6 }}>Last period start date</label>
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+              style={{ width:"100%", padding:10, borderRadius:8, border:"1px solid #ddd", fontSize:13, marginBottom:16 }} />
+
+            <label style={{ fontSize:13, fontWeight:600, color:"#333", display:"block", marginBottom:6 }}>Cycle length (days)</label>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <input type="range" min={21} max={35} value={cycleLength} onChange={e => setCycleLength(Number(e.target.value))} style={{ flex:1 }} />
+              <span style={{ fontSize:16, fontWeight:600, color:"#333", minWidth:30 }}>{cycleLength}</span>
+            </div>
+            <div style={{ fontSize:11, color:"#888", marginTop:4 }}>Typical range: 21–35 days. 28 is average.</div>
+          </div>
+          <button onClick={onSwitchUser}
+            style={{ width:"100%", marginTop:16, padding:"12px 0", borderRadius:10, background:"#fff", color:"#666", border:"1px solid #ddd", fontSize:14, fontWeight:500, cursor:"pointer" }}>
+            Switch User
+          </button>
+          <div style={{ marginTop:16, padding:14, background:"#fff8e1", borderRadius:10, fontSize:12, color:"#666", lineHeight:1.6 }}>
+            <strong>Note:</strong> All estimates are based on a regular cycle model. Real cycles vary. Update the start date each time a new period begins for better accuracy.
+          </div>
+        </>}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [user, setUser] = useState(null);
+  if (!user) return <UserPicker onSelect={setUser} />;
+  return <Tracker user={user} onSwitchUser={() => setUser(null)} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
